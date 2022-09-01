@@ -1,0 +1,183 @@
+---
+title: "Evaluate Exercise Performance using Machine Learning"
+output: html_document
+fontsize: 12pt
+---
+**1. Introduction**
+
+  Nowadays, we use smart wearables to collect data while doing exercise. It is possible to use these data to evaluate our exercise performance and help us improve exercise efficiency and correct the wrong doings. Therefore, here we use machine learning to build models to predict one's exercise performance.
+
+**2. Results**
+
+  Load libraries
+
+```{r load_libraries, warning=FALSE,echo=TRUE,message=FALSE}
+library(caret)
+library(corrplot)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(corrplot)
+library(rpart)
+```
+
+**2.1. Get the data**
+
+  We first download and load the data. 
+
+```{r get_data, cache=TRUE,warning=FALSE}
+# Download files
+# download.file(url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile = "pml-training.csv")
+# 
+# download.file(url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile = "pml-training.csv")
+
+# load the training data sets
+data_set <- read.csv("./pml-training.csv")
+test_set <- read.csv("./pml-testing.csv")
+```
+
+**2.2. Dataset check and clean-up**
+
+  After loading the data, we go through the data structure using str(data_set), results omitted due to page limit. We notice there are unnecessary variables, numbers kept as character, and variables with too many NAs. So, we do the following data clean-up.
+
+```{r, check_data, results='hide'}
+str(data_set)
+```
+
+
+**2.2.1. Remove unnecessary variables**
+
+  First of all, we removed identities and timestamps variables as we see no need to include in the model building.
+
+```{r data_cleanup1, warning=FALSE}
+data_set1 <- data_set[,c(-1:-5)]
+```
+
+**2.2.2. Convert character to numeric**
+
+  Next, we checked the data type. We noticed some features are actually numeric but kept as character, so, we convert thoes to numeric first.
+
+
+```{r data_cleanup2, warning=FALSE}
+x <- sapply(data_set1,mode)
+chr_id <- x=="character"
+data_set2 <- data_set1
+
+for (i in 2:c(length(chr_id)-1)){
+  if (chr_id[i] == TRUE){
+    data_set2[,i] = as.numeric(data_set1[,i])
+  }
+}
+```
+
+**2.2.3. Missing values**
+
+  As we covert the character to numeric, those blanks are coerced to NAs. On the other hand, many logi variables are basically NAs, so we remove variables with NAs more than 60%.
+
+```{r data_cleanup3, warning=FALSE}
+na_count <- apply(data_set2, 2, function(x)sum(is.na(x))) 
+na_id <- na_count < nrow(data_set2)*0.6
+data_set3 <- data_set2[, na_id]
+```
+
+  Now, we are ready to use the data set (data_set3) to build models.
+
+**2.3. Build models**
+
+**2.3.1. Training and testing sets**
+
+  As usual, we'll first split the data_set3 to train and test sets.
+
+```{r train_n_test, warning=FALSE}
+inTrain  <- createDataPartition(data_set3$classe, p=0.7, list=FALSE)
+TrainSet <- data_set3[inTrain, ]
+TestSet  <- data_set3[-inTrain, ]
+dim(TrainSet)
+```
+
+**2.3.2. Check data (co-)variations**
+
+  Since we still have 54 variables to go, we wonder are there any variables not vary much so that would not contribute to model differentiation but only add-up calculation load, so we first check the data variation.
+
+```{r check_var1, warning=FALSE}
+nv_id <- nearZeroVar(TrainSet)
+TrainSet1 <- TrainSet[, -nv_id]
+TestSet1 <- TestSet[, -nv_id]
+dim(TrainSet1)
+
+```
+
+  So, we see that "new_window" does vary too much, as 97% of the data is "no", using the following code to check.
+
+```{r, warning=FALSE,eval=FALSE}
+x <- TrainSet$new_window
+table(x)
+```
+
+  Next, we checked the covariance of these variables to see if we need to use PCA to build models on principle components.
+
+```{r check_var2, warning=FALSE}
+corMatrix <- cor(TrainSet1[, -54])
+corrplot(corMatrix, order = "FPC", method = "color", type = "lower", tl.cex = 0.6, tl.col = 'black')
+```
+
+Fig.1 Covariance of the dataset. Heatmap is correlations, blue represent positive correlations and red negative.
+
+  As shown in Fig. 1, no significant positive correlations between variables are observed, as indicated by not many very blue blocks. So, we can now proceed to build our model using all 53 variables.
+
+**2.3.3. Build models**
+
+  From what we have learned from this class, we decide to build models using random forest and decision tree, and use the accuracy from testset to compare the two. If both are weak model, we will consider combining the two to build a better one.
+
+**2.3.3.1 Random Forest**
+
+```{r model_rf, cache=TRUE, warning=FALSE}
+# set.seed(25331)
+# build the random forest model
+rf_control <- trainControl(method="boot", number=3, verboseIter=FALSE)
+fit_rf <- train(classe ~ ., data=TrainSet1, method="rf", trControl=rf_control)
+fit_rf $finalModel
+```
+
+```{r model_rf1, warning=FALSE}
+# get the accuracy of the model
+predict_rf <- predict(fit_rf, newdata=TestSet1)
+conf_rf <- confusionMatrix(predict_rf, as.factor(TestSet1$classe))
+conf_rf
+```
+
+  So, the accuracy of this random forest is`r round(conf_rf$overall[1],4)`. Pretty good.
+
+**2.3.3.2 Decision Tree**
+
+```{r model_dt, warning=FALSE, cache=TRUE}
+# build the decision tree model
+# set.seed(25331)
+fit_dt <- rpart(classe ~ ., data=TrainSet1, method="class")
+fancyRpartPlot(fit_dt, main = "Decision Tree", sub = "")
+```
+
+
+```{r model_dt1, warning=FALSE}
+# get the accuracy of the model
+predict_dt <- predict(fit_dt, newdata=TestSet1,type="class")
+conf_dt <- confusionMatrix(predict_dt, as.factor(TestSet1$classe))
+conf_dt
+```
+
+  So, the accuracy of this decision tree is `r round(conf_dt$overall[1],4)`.
+
+  Compare the two models, though random forest takes fair amount of time, its accuracy is very satisfied. Therefore, we decide to use the random forest (fit_rf) to predict test dataset.
+
+**2.4. Apply the chosen model for tests**
+
+```{r pred_test, warning=FALSE}
+predict_test <- predict(fit_rf, newdata=test_set)
+predict_test
+```
+
+  The above is the answer to the course project quiz.
+  
+**3. Conclusions**
+
+In conclusion, we have built a model using random forest method to predict exercise performance class.
